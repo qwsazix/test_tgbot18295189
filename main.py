@@ -63,14 +63,6 @@ def download_video_sync(url):
         filename = ydl.prepare_filename(info)
         return filename
 
-@dp.message()
-async def handle_message(message: Message):
-    text = message.text
-    
-    if not text or not text.startswith(('http://', 'https://')):
-        await message.answer("Please send the correct link to the video")
-        return
-
 @dp.message(Command("download"))
 async def start_download(message: Message, state: FSMContext):
     await message.answer("🔗 Please send a <b>video link</b> to start downloading.",
@@ -114,6 +106,13 @@ async def process_url(message: Message, state: FSMContext):
         await message.answer("Try again. Waiting for the video URL...")
         return # завершаем функцию тем самым заставляя снова выполниться process_url
 
+@dp.message()
+async def handle_message(message: Message):
+    text = message.text
+    
+    if not text or not text.startswith(('http://', 'https://')):
+        await message.answer("/download to use the bot")
+        return
 
 async def main():
     await dp.start_polling(bot)
