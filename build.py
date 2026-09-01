@@ -63,6 +63,13 @@ def download_video_sync(url):
         filename = ydl.prepare_filename(info)
         return filename
 
+@dp.message()
+async def handle_message(message: Message):
+    text = message.text
+    
+    if not text or not text.startswith(('http://', 'https://')):
+        await message.answer("Please send the correct link to the video")
+        return
 
 @dp.message(Command("download"))
 async def start_download(message: Message, state: FSMContext):
