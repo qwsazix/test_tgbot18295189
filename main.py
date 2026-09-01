@@ -28,8 +28,9 @@ class DownloadStates(StatesGroup):
 def download_video_sync(url):
     options = {
         'color': 'no_color',
-        "outtmpl": "downloads/%(id)s_%(title)s.%(ext)s",  # id предотвращает конфликты имён
+        "outtmpl": "downloads/%(id)s_%(title)s.%(ext)s",
         "format": "bestvideo+bestaudio/best",
+        'cookiefile': 'cookies.txt',
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
