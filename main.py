@@ -32,6 +32,9 @@ def download_video_sync(url):
         "format": "bestvideo+bestaudio/best",
         'cookiefile': 'cookies.txt',
         "merge_output_format": "mp4",
+        'js_runtimes': {
+            'youtube': 'node',
+        },
         "quiet": True,
         "noplaylist": True,
         "no_warnings": False,
