@@ -1,13 +1,12 @@
 import os
 from dotenv import load_dotenv
+from html import escape
 
 import asyncio
 from pathlib import Path
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 import yt_dlp
@@ -21,9 +20,6 @@ dp = Dispatcher(storage=MemoryStorage())
 
 MB = 1024 * 1024
 size_limit = 50 * MB
-
-class DownloadStates(StatesGroup):
-    waiting_for_url = State()
 
 def download_video_sync(url):
     options = {
@@ -55,7 +51,7 @@ def download_video_sync(url):
         if not info:
             return False
 
-            # Если объект оказался плейлистом, берём первый элемент
+            # eсли объект оказался плейлистом, берём первый элемент
         if "entries" in info:
             if not info["entries"]:
                 return False
@@ -64,23 +60,35 @@ def download_video_sync(url):
         filename = ydl.prepare_filename(info)
         return filename
 
-@dp.message(Command("download"))
-async def start_download(message: Message, state: FSMContext):
-    await message.answer("🔗 Please send a <b>video link</b> to start downloading.",
+@dp.message(Command("start"))
+async def handle_start(message: Message):
+    await message.answer("Send me any video link and I'll download it for you! Powered by yt-dlp. <b>No commands required — just paste the URL right here.</b>",
                          parse_mode="HTML")
-    await state.set_state(DownloadStates.waiting_for_url)
 
-@dp.message(DownloadStates.waiting_for_url)
+@dp.message()
 async def process_url(message: Message, state: FSMContext):
-    url = message.text
-    await message.answer("Preparing to download the video...")
+    url = message.text  
+    
+    if not url or not url.startswith(('http://', 'https://')):
+        await message.answer(
+            "⚠️ <b>Invalid link format</b>\n"
+            f"<code>{escape(url)}</code> is not a valid link.\n"
+            "Please send a valid URL starting with <code>http://</code> or <code>https://</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    await message.answer(
+        "⏳ <b>Processing link...</b>", 
+        parse_mode="HTML"
+    )
     try: 
         filename = await asyncio.to_thread(download_video_sync, url)
 
         file_path = Path(filename)
         if file_path.exists():
             if file_path.stat().st_size > size_limit:
-                await message.answer("<b>The video size exceeds Telegram's 50-megabyte limit.</b> Try downloading the video in a lower resolution.",
+                await message.answer("<b>The video size exceeds Telegram's 50-megabyte limit.</b> Try to download another video.",
                                     parse_mode="HTML")
                 await message.answer("Waiting for the video URL...")
                 file_path.unlink()
@@ -98,22 +106,15 @@ async def process_url(message: Message, state: FSMContext):
             return
         
         await message.answer(
-            "<b>Video sent successfully!</b> /download — for another video",
+            "<b>✅ Done!</b> Ready for the next URL!",
             parse_mode="HTML")
         
         await state.clear()
     except Exception as e:
         await message.answer(f"{type(e).__name__}: {e}")
-        await message.answer("Try again. Waiting for the video URL...")
+        await message.answer("Try again! <b>Waiting for the video URL...</b>", parse_mode="HTML")
         return # завершаем функцию тем самым заставляя снова выполниться process_url
 
-@dp.message()
-async def handle_message(message: Message):
-    text = message.text
-    
-    if not text or not text.startswith(('http://', 'https://')):
-        await message.answer("/download to use the bot")
-        return
 
 async def main():
     await dp.start_polling(bot)
