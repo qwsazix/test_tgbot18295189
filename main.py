@@ -146,8 +146,13 @@ def get_video_metadata(url):
 
 @dp.message(Command("start"))
 async def handle_start(message: Message):
-    await message.answer("Send me any video link and I'll download it for you! Powered by yt-dlp. <b>No commands required — just paste the URL right here.</b>",
-                         parse_mode="HTML")
+    await message.answer(
+        text=(
+            "Send me any video link and I'll download it for you! Powered by yt-dlp."
+            "<b>No commands required — just paste the URL right here.</b>"
+        ),
+        parse_mode="HTML"
+        )
 
 @dp.message()
 async def process_url(message: Message):
@@ -155,9 +160,11 @@ async def process_url(message: Message):
     
     if not url or not url.startswith(('http://', 'https://')):
         await message.answer(
+            text=(
             "⚠️ <b>Invalid link format</b>\n"
             f"<code>{escape(url[:100])}</code> is not a valid link.\n"
-            "Please send a valid URL starting with <code>http://</code> or <code>https://</code>",
+            "Please send a valid URL starting with <code>http://</code> or <code>https://</code>"
+            ),
             parse_mode="HTML"
         )
         return
@@ -184,10 +191,10 @@ async def process_url(message: Message):
             await message.answer_photo(
                 photo=URLInputFile(data['thumb_url']),
                 caption=(
-                f"<b>Title:</b> {data['title']}\n"
-                f"<b>Author:</b> {data['author']}"
-                f"\n<b>Upload date:</b> {data['upload_date']}\n\n"
-                f"<b>Choose format to download:</b>"
+                    f"<b>Title:</b> {data['title']}\n"
+                    f"<b>Author:</b> {data['author']}"
+                    f"\n<b>Upload date:</b> {data['upload_date']}\n\n"
+                    f"<b>Choose format to download:</b>"
                 ), 
                 reply_markup=keyboard,
                 parse_mode="HTML"
@@ -202,6 +209,19 @@ async def process_url(message: Message):
         await message.answer("Try again! <b>Waiting for the video URL...</b>", parse_mode="HTML")
         return
     
+async def check_50mb_limit(file_path, message: Message):
+    if file_path.stat().st_size > size_limit:
+        await message.answer(
+            text=(
+                "<b>⚠️ File size exceeds limit</b>\nThis file is larger than Telegram’s 50 MB limit."
+                "Try downloading the audio version instead, or choose a shorter video."
+            ),
+            parse_mode="HTML")
+        
+        file_path.unlink()
+        return True
+    return False
+
 # универсальная функция для скачивания и отправки видео    
 async def proccess_and_send_video(url:str, message: Message):
     try: 
@@ -216,25 +236,21 @@ async def proccess_and_send_video(url:str, message: Message):
         file_path = Path(filename)
         if file_path.exists():
             # если размер скачанного видео превышает 50МБ ограничение телеграмовского апи
-            if file_path.stat().st_size > size_limit:
-                await message.answer("<b>The video size exceeds Telegram's 50-megabyte limit.</b> Try to download another video.",
+            file_size_result = await check_50mb_limit(file_path, message)
+            if file_size_result: return
+            
+            # если размер в норме, отправляем видео
+            await status_msg.edit_text("📥 <b>Downloaded!</b> Uploading to chat...",
                                     parse_mode="HTML")
-                await message.answer("Waiting for the video URL...")
-                file_path.unlink()
-                return
-            else:
-                # если размер в норме, отправляем видео
-                await status_msg.edit_text("📥 <b>Downloaded!</b> Uploading to chat...",
-                                        parse_mode="HTML")
-                    
-                await message.answer_video(
-                    video=FSInputFile(file_path)
-                    )
                 
-                # удаляем видео с диска
-                file_path.unlink()  
-                #в самом конце можно удалить статусное сообщение
-                await status_msg.delete()
+            await message.answer_video(
+                video=FSInputFile(file_path)
+                )
+            
+            # удаляем видео с диска
+            file_path.unlink()  
+            #в самом конце можно удалить статусное сообщение
+            await status_msg.delete()
         else:
             # если по какой-то причине файла вообще не существует, то сообщаем об ошибке
             await status_msg.edit_text("Unexpected error occured! Try again")
@@ -279,6 +295,9 @@ async def handle_audio_download(callback: CallbackQuery):
     audio_path, thumb_url = result
     
     try:
+        result = await check_50mb_limit(Path(audio_path), callback.message)
+        if result: return
+        
         # парсим Исполнителя и Название
         clean_path = Path(audio_path).stem
         if " – " in clean_path:
@@ -293,9 +312,6 @@ async def handle_audio_download(callback: CallbackQuery):
             performer=performer.strip(),
             thumbnail=URLInputFile(thumb_url)
         )
-        
-        # Удаляем временное статусное сообщение
-        await status_msg.delete()
     except Exception as e:
             await callback.message.answer("⚠️ Error sending audio file.")
     finally:
@@ -305,6 +321,7 @@ async def handle_audio_download(callback: CallbackQuery):
                     os.remove(audio_path)
                 except OSError:
                     pass
+            await status_msg.delete()
             await callback.answer()
 
 async def main():
