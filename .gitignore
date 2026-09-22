@@ -3,3 +3,5 @@ cookies.txt
 .venv/
 venv/
 downloads/
+covers/
+audio/

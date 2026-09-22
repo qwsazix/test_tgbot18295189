@@ -1,13 +1,14 @@
-import os, urllib.request, re
+import os, re
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from html import escape
+from datetime import datetime
 
 import asyncio
 from pathlib import Path
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile, CallbackQuery
+from aiogram.types import Message, FSInputFile, URLInputFile, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -60,12 +61,7 @@ def download_audio_sync(url):
     options = {
         'color': 'no_color',
         'outtmpl': 'audio/%(channel)s – %(title)s.%(ext)s',
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '0',
-        }],
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'cookiefile': 'cookies.txt',
         'quiet': True,
         'noplaylist': True,
@@ -98,8 +94,7 @@ def download_audio_sync(url):
         thumbnail_url = info.get("thumbnail")
 
         filename = ydl.prepare_filename(info)
-        filepath = filename.rsplit('.', 1)[0] + '.mp3'
-        return filepath, thumbnail_url
+        return filename, thumbnail_url
 
 def download_video_sync(url):
     options = {
@@ -138,7 +133,34 @@ def download_video_sync(url):
             info = info["entries"][0]
 
         filename = ydl.prepare_filename(info)
+        
         return filename
+    
+def get_video_metadata(url):
+    with yt_dlp.YoutubeDL() as ydl:
+        info = ydl.extract_info(url, download=False)
+        if not info:
+            return False
+
+            # eсли объект оказался плейлистом, берём первый элемент
+        if "entries" in info:
+            if not info["entries"]:
+                return False
+            info = info["entries"][0]
+            
+        raw_date = info.get("upload_date")
+        formatted_date = None
+        if raw_date:
+            formatted_date = datetime.strptime(raw_date, "%Y%m%d").strftime("%d.%m.%Y")
+
+        return {
+            "title": info.get("title"),                  # Название видео
+            "author": info.get("uploader"),              # Имя автора / канала
+            "upload_date": formatted_date,               # Дата загрузки (в отформатированном виде)
+            "thumb_url": info.get("thumbnail"),      # Ссылка на превью
+            "views": info.get("view_count"),             # Количество просмотров
+            "description": info.get("description")       # Описание видео
+        }
 
 @dp.message(Command("start"))
 async def handle_start(message: Message):
@@ -152,13 +174,50 @@ async def process_url(message: Message):
     if not url or not url.startswith(('http://', 'https://')):
         await message.answer(
             "⚠️ <b>Invalid link format</b>\n"
-            f"<code>{escape(url[:80])}</code> is not a valid link.\n"
+            f"<code>{escape(url[:100])}</code> is not a valid link.\n"
             "Please send a valid URL starting with <code>http://</code> or <code>https://</code>",
             parse_mode="HTML"
         )
         return
-    
 
+    try:
+        result = await asyncio.to_thread(get_video_metadata, url)
+        if not result:
+            await message.answer('❌ Could not retrieve video metadata.')
+            return
+        
+        data = result
+        
+        if is_youtube_url(url):
+            print(data['thumb_url'])
+            short_url = extract_yt_short_url(url)
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="🎦 Download video", callback_data=f"vid:{short_url}"),
+                        InlineKeyboardButton(text="🎵 Download audio", callback_data=f"aud:{short_url}"),
+                    ]
+                ]
+            )
+            
+            await message.answer_photo(
+                photo=URLInputFile(data['thumb_url']),
+                caption=f"<b>Title:</b> {data['title']}\n<b>Author:</b> {data['author']}\n<b>Upload date:</b> {data['upload_date']}\n\n<b>Choose format to download:</b>", 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+                )
+        else:
+            # если ссылка не ютубовская сразу скачиваем и отправляем видео, не предлагая форматы
+            await proccess_and_send_video(url, message)
+        
+    except Exception as e:
+            # ловим ошибки yt_dlp и выводим их пользователю
+        await message.answer(f"{type(e).__name__}: {e}")
+        await message.answer("Try again! <b>Waiting for the video URL...</b>", parse_mode="HTML")
+        return
+    
+# универсальная функция для скачивания и отправки видео    
+async def proccess_and_send_video(url:str, message: Message):
     try: 
         status_msg = await message.answer(
             "⏳ <b>Processing link...</b>", 
@@ -180,21 +239,10 @@ async def process_url(message: Message):
             else:
                 # если размер в норме, отправляем видео
                 await status_msg.edit_text("📥 <b>Downloaded!</b> Uploading to chat...",
-                                     parse_mode="HTML")
-                
-                if is_youtube_url(url):
-                    short_url = extract_yt_short_url(url)
-                    keyboard = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(text="🎵 Convert to MP3", callback_data=f"convert_mp3:{short_url}"),
-                            ]
-                        ]
-                    )
+                                        parse_mode="HTML")
                     
                 await message.answer_video(
-                    video=FSInputFile(file_path),
-                    reply_markup=keyboard if is_youtube_url(url) else None # если ссылка ютубовская то даем возможность конвертации в аудио
+                    video=FSInputFile(file_path)
                     )
                 
                 # удаляем видео с диска
@@ -213,20 +261,19 @@ async def process_url(message: Message):
         await message.answer("Try again! <b>Waiting for the video URL...</b>", parse_mode="HTML")
         return # завершаем функцию тем самым заставляя снова выполниться process_url
 
-# логика инлайн кнопки convert to mp3
+        
+        
+# хэндлеры для инлайн кнопок
+@dp.callback_query(F.data.startswith("vid:"))
+async def handle_video_download(callback: CallbackQuery):
+    url = callback.data.split("vid:", 1)[1]
+    await proccess_and_send_video(url, callback.message)
+    await callback.answer()
 
-def download_cover_sync(url: str, save_path: str) -> bool:
-    # cинхронная вспомогательная функция для скачивания обложки
-    try:
-        urllib.request.urlretrieve(url, save_path)
-        return os.path.exists(save_path)
-    except Exception as e:
-        print(f"Error downloading cover: {e}")
-        return False
 
-@dp.callback_query(F.data.startswith("convert_mp3:"))
-async def handle_audio_convertion(callback: CallbackQuery):
-    video_url = callback.data.split("convert_mp3:", 1)[1]
+@dp.callback_query(F.data.startswith("aud:"))
+async def handle_audio_download(callback: CallbackQuery):
+    video_url = callback.data.split("aud:", 1)[1]
     audio_path = None
     thumb_url = None
     
@@ -246,59 +293,33 @@ async def handle_audio_convertion(callback: CallbackQuery):
     audio_path, thumb_url = result
     
     try:
-        # 1. Скачиваем обложку (с уникальным именем на основе имени аудио)
-        if thumb_url:
-            covers_dir = Path("covers")
-            covers_dir.mkdir(exist_ok=True)
-            
-            # Используем имя аудиофайла, чтобы избежать конфликтов при параллельных запросах
-            temp_cover_path = covers_dir / f"cover_{Path(audio_path).stem}.jpg"
-            
-            # Запускаем синхронное скачивание в отдельном потоке
-            cover_downloaded = await asyncio.to_thread(
-                download_cover_sync, thumb_url, str(temp_cover_path)
-            )
-            
-            if cover_downloaded:
-                cover_for_audio = FSInputFile(temp_cover_path)
-
-        # 2. Парсим Исполнителя и Название
+        # парсим Исполнителя и Название
         clean_path = Path(audio_path).stem
         if " – " in clean_path:
             performer, title = clean_path.split(" – ", 1)
         else:
             performer, title = "Unknown", clean_path
 
-        # 3. Отправляем аудио в Telegram
+        # отправляем аудио в Telegram
         await callback.message.answer_audio(
             audio=FSInputFile(audio_path),
             title=title.strip(),
             performer=performer.strip(),
-            thumbnail=cover_for_audio
+            thumbnail=URLInputFile(thumb_url)
         )
         
         # Удаляем временное статусное сообщение
         await status_msg.delete()
-
     except Exception as e:
-            print(f"Error sending audio: {e}")
             await callback.message.answer("⚠️ Error sending audio file.")
-
     finally:
-            # Guaranteed Cleanup (Очистка гарантированно выполнится даже при ошибке)
-            if temp_cover_path and os.path.exists(temp_cover_path):
-                try:
-                    os.remove(temp_cover_path)
-                except OSError:
-                    pass
-
+            # очистка гарантированно выполнится даже при ошибке
             if audio_path and os.path.exists(audio_path):
                 try:
                     os.remove(audio_path)
                 except OSError:
                     pass
             await callback.answer()
-    
 
 async def main():
     await dp.start_polling(bot)
