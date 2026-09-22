@@ -142,7 +142,7 @@ def get_video_metadata(url):
         },
         'extractor_args': {
            "youtube": {
-                "player_client": ["web_embedded", "tv"]
+                "player_client": ["tv", "web_safari"]
             }
         },
     }
