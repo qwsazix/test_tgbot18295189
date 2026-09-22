@@ -177,13 +177,13 @@ async def process_url(message: Message):
         
         data = result
         
-        if data["extractor"] == 'youtube':
+        if data['extractor'] == 'youtube':
             print(data['thumb_url'])
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="🎬 Video (MP4)", callback_data=f"vid:{data["id"]}"),
-                        InlineKeyboardButton(text="🎧 Audio (M4A)", callback_data=f"aud:{data["id"]}"),
+                        InlineKeyboardButton(text="🎬 Video (MP4)", callback_data=f"vid:{data['id']}"),
+                        InlineKeyboardButton(text="🎧 Audio (M4A)", callback_data=f"aud:{data['id']}"),
                     ]
                 ]
             )
@@ -295,6 +295,7 @@ async def handle_audio_download(callback: CallbackQuery):
     audio_path, thumb_url = result
     
     try:
+        # проверяем размер аудиофайла на лимит
         result = await check_50mb_limit(Path(audio_path), callback.message)
         if result: return
         
