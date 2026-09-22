@@ -129,7 +129,8 @@ def get_video_metadata(url):
         'quiet': True,
         'no_progress': True,
         'noplaylist': True,
-        'no_warnings': True
+        'no_warnings': True,
+        'cookiefile': 'cookies.txt'
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
