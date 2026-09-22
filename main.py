@@ -1,5 +1,4 @@
-import os, re
-from urllib.parse import urlparse
+import os
 from dotenv import load_dotenv
 from html import escape
 from datetime import datetime
@@ -9,7 +8,6 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile, URLInputFile, CallbackQuery
-from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
@@ -33,30 +31,6 @@ VALID_HOSTS = {
     'www.youtube-nocookie.com'
 }
 
-    # укорачиваем юрл ютуба, чтобы он поместился в колбекдата инлайн кнопки
-def extract_yt_short_url(url: str) -> str | None:
-    # ищем 11-значный ID видео YouTube
-    pattern = r'(?:v=|\/embed\/|\/shorts\/|youtu\.be\/)([0-9A-Za-z_-]{11})'
-    match = re.search(pattern, url)
-    if match:
-        video_id = match.group(1) or match.group(2)
-        return f"https://youtu.be/{video_id}"
-    return None
-
-    # проверка принадлежит ли отправленный юрл ютубу
-def is_youtube_url(url: str) -> bool:
-    # добавляем схему, если пользователь ввёл ссылку без http/https
-    if not url.startswith(('http://', 'https://')):
-        url = 'https://' + url
-
-    try:
-        parsed = urlparse(url)
-        # hostname автоматически приводит домен к нижнему регистру
-        return parsed.hostname in VALID_HOSTS
-    except Exception:
-        return False
-
-
 def download_audio_sync(url):
     options = {
         'color': 'no_color',
@@ -64,6 +38,7 @@ def download_audio_sync(url):
         'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'cookiefile': 'cookies.txt',
         'quiet': True,
+        'noprogress':True,
         'noplaylist': True,
         'no_warnings': False,
         'js_runtimes': {"node": {}},
@@ -104,6 +79,7 @@ def download_video_sync(url):
         'merge_output_format': 'mp4',
         'cookiefile': 'cookies.txt',
         'quiet': True,
+        'noprogress':True,
         'noplaylist': True,
         'no_warnings': False,
         'js_runtimes': {"node": {}},
@@ -137,7 +113,13 @@ def download_video_sync(url):
         return filename
     
 def get_video_metadata(url):
-    with yt_dlp.YoutubeDL() as ydl:
+    options = {
+        'quiet': True,
+        'no_progress': True,
+        'noplaylist': True,
+        'no_warnings': True
+    }
+    with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
         if not info:
             return False
@@ -154,12 +136,12 @@ def get_video_metadata(url):
             formatted_date = datetime.strptime(raw_date, "%Y%m%d").strftime("%d.%m.%Y")
 
         return {
+            "id": info.get("id"),                        # ID видео
             "title": info.get("title"),                  # Название видео
             "author": info.get("uploader"),              # Имя автора / канала
             "upload_date": formatted_date,               # Дата загрузки (в отформатированном виде)
-            "thumb_url": info.get("thumbnail"),      # Ссылка на превью
-            "views": info.get("view_count"),             # Количество просмотров
-            "description": info.get("description")       # Описание видео
+            "thumb_url": info.get("thumbnail"),          # Ссылка на превью
+            "extractor": info.get("extractor", "").lower() # Указание домена
         }
 
 @dp.message(Command("start"))
@@ -188,21 +170,25 @@ async def process_url(message: Message):
         
         data = result
         
-        if is_youtube_url(url):
+        if data["extractor"] == 'youtube':
             print(data['thumb_url'])
-            short_url = extract_yt_short_url(url)
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="🎦 Download video", callback_data=f"vid:{short_url}"),
-                        InlineKeyboardButton(text="🎵 Download audio", callback_data=f"aud:{short_url}"),
+                        InlineKeyboardButton(text="🎬 Video (MP4)", callback_data=f"vid:{data["id"]}"),
+                        InlineKeyboardButton(text="🎧 Audio (M4A)", callback_data=f"aud:{data["id"]}"),
                     ]
                 ]
             )
             
             await message.answer_photo(
                 photo=URLInputFile(data['thumb_url']),
-                caption=f"<b>Title:</b> {data['title']}\n<b>Author:</b> {data['author']}\n<b>Upload date:</b> {data['upload_date']}\n\n<b>Choose format to download:</b>", 
+                caption=(
+                f"<b>Title:</b> {data['title']}\n"
+                f"<b>Author:</b> {data['author']}"
+                f"\n<b>Upload date:</b> {data['upload_date']}\n\n"
+                f"<b>Choose format to download:</b>"
+                ), 
                 reply_markup=keyboard,
                 parse_mode="HTML"
                 )
