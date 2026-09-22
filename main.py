@@ -126,11 +126,25 @@ def download_video_sync(url):
     
 def get_video_metadata(url):
     options = {
+        'color': 'no_color',
         'quiet': True,
         'no_progress': True,
         'noplaylist': True,
         'no_warnings': True,
-        'cookiefile': 'cookies.txt'
+        'cookiefile': 'cookies.txt',
+        'js_runtimes': {"node": {}},
+        'http_headers': {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5"
+        },
+        'extractor_args': {
+           "youtube": {
+                "player_client": ["web_embedded", "tv"]
+            }
+        },
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
