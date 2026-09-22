@@ -66,10 +66,22 @@ def download_audio_sync(url):
                 return False
             info = info["entries"][0]
             
-        thumbnail_url = info.get("thumbnail")
+        raw_date = info.get("upload_date")
+        formatted_date = None
+        if raw_date:
+            formatted_date = datetime.strptime(raw_date, "%Y%m%d").strftime("%d.%m.%Y")
+            
+        data = {
+            "id": info.get("id"),                        # ID видео
+            "title": info.get("title"),                  # Название видео
+            "author": info.get("uploader"),              # Имя автора / канала
+            "upload_date": formatted_date,               # Дата загрузки (в отформатированном виде)
+            "thumb_url": info.get("thumbnail"),          # Ссылка на превью
+            "extractor": info.get("extractor", "").lower(), # Указание домена
+        }
 
         filename = ydl.prepare_filename(info)
-        return filename, thumbnail_url
+        return filename, data
 
 def download_video_sync(url):
     options = {
@@ -134,6 +146,8 @@ def get_video_metadata(url):
         formatted_date = None
         if raw_date:
             formatted_date = datetime.strptime(raw_date, "%Y%m%d").strftime("%d.%m.%Y")
+        
+        is_audio_only = info.get('vcodec') == 'none'
 
         return {
             "id": info.get("id"),                        # ID видео
@@ -141,7 +155,8 @@ def get_video_metadata(url):
             "author": info.get("uploader"),              # Имя автора / канала
             "upload_date": formatted_date,               # Дата загрузки (в отформатированном виде)
             "thumb_url": info.get("thumbnail"),          # Ссылка на превью
-            "extractor": info.get("extractor", "").lower() # Указание домена
+            "extractor": info.get("extractor", "").lower(), # Указание домена
+            "is_audio_only": is_audio_only               # Проверяем наличие видеодорожки
         }
 
 @dp.message(Command("start"))
@@ -178,7 +193,6 @@ async def process_url(message: Message):
         data = result
         
         if data['extractor'] == 'youtube':
-            print(data['thumb_url'])
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
@@ -199,8 +213,19 @@ async def process_url(message: Message):
                 reply_markup=keyboard,
                 parse_mode="HTML"
                 )
+        elif data['is_audio_only']:
+            await message.answer_photo(
+                photo=URLInputFile(data['thumb_url']),
+                caption=(
+                    f"<b>Title:</b> {data['title']}\n"
+                    f"<b>Author:</b> {data['author']}"
+                    f"\n<b>Upload date:</b> {data['upload_date']}\n\n"
+                ), 
+                parse_mode="HTML"
+                )
+            await proccess_and_send_audio(url, message)
         else:
-            # если ссылка не ютубовская сразу скачиваем и отправляем видео, не предлагая форматы
+            # если ссылка не ютубовская и аутпут является видео, то сразу скачиваем и отправляем видео, не предлагая форматы
             await proccess_and_send_video(url, message)
         
     except Exception as e:
@@ -222,7 +247,7 @@ async def check_50mb_limit(file_path, message: Message):
         return True
     return False
 
-# универсальная функция для скачивания и отправки видео    
+# универсальная функция для скачивания и отправки ВИДЕО
 async def proccess_and_send_video(url:str, message: Message):
     try: 
         status_msg = await message.answer(
@@ -263,6 +288,47 @@ async def proccess_and_send_video(url:str, message: Message):
         await message.answer("Try again! <b>Waiting for the video URL...</b>", parse_mode="HTML")
         return # завершаем функцию тем самым заставляя снова выполниться process_url
 
+# универсальная функция для скачивания и отправки АУДИО
+async def proccess_and_send_audio(audio_url: str, message: Message):
+    audio_path = None
+    data = None
+    
+    if not audio_url:
+        await message.answer("⚠️ Invalid video data.")
+        return
+    
+    status_msg = await message.answer("⏳ Processing audio, please wait...")
+    
+        # Скачиваем аудио
+    result = await asyncio.to_thread(download_audio_sync, audio_url)
+    if not result or not result[0]:
+        await status_msg.edit_text("⚠️ Failed to download audio.")
+        return
+        
+    audio_path, data = result
+    
+    try:
+        # проверяем размер аудиофайла на лимит
+        result = await check_50mb_limit(Path(audio_path), message)
+        if result: return
+        
+        # отправляем аудио в Telegram
+        await message.answer_audio(
+            audio=FSInputFile(audio_path),
+            title=data['title'],
+            performer=data['author'],
+            thumbnail=URLInputFile(data['thumb_url'])
+        )
+    except Exception as e:
+            await message.answer("⚠️ Error sending audio file.")
+    finally:
+            # очистка гарантированно выполнится даже при ошибке
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    os.remove(audio_path)
+                except OSError:
+                    pass
+            await status_msg.delete()
         
         
 # хэндлеры для инлайн кнопок
@@ -276,54 +342,8 @@ async def handle_video_download(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("aud:"))
 async def handle_audio_download(callback: CallbackQuery):
     video_url = callback.data.split("aud:", 1)[1]
-    audio_path = None
-    thumb_url = None
-    
-    if not video_url:
-        await callback.message.answer("⚠️ Invalid video data.")
-        await callback.answer()
-        return
-    
-    status_msg = await callback.message.answer("⏳ Processing audio, please wait...")
-    
-        # Скачиваем аудио
-    result = await asyncio.to_thread(download_audio_sync, video_url)
-    if not result or not result[0]:
-        await status_msg.edit_text("⚠️ Failed to download audio.")
-        return
-        
-    audio_path, thumb_url = result
-    
-    try:
-        # проверяем размер аудиофайла на лимит
-        result = await check_50mb_limit(Path(audio_path), callback.message)
-        if result: return
-        
-        # парсим Исполнителя и Название
-        clean_path = Path(audio_path).stem
-        if " – " in clean_path:
-            performer, title = clean_path.split(" – ", 1)
-        else:
-            performer, title = "Unknown", clean_path
-
-        # отправляем аудио в Telegram
-        await callback.message.answer_audio(
-            audio=FSInputFile(audio_path),
-            title=title.strip(),
-            performer=performer.strip(),
-            thumbnail=URLInputFile(thumb_url)
-        )
-    except Exception as e:
-            await callback.message.answer("⚠️ Error sending audio file.")
-    finally:
-            # очистка гарантированно выполнится даже при ошибке
-            if audio_path and os.path.exists(audio_path):
-                try:
-                    os.remove(audio_path)
-                except OSError:
-                    pass
-            await status_msg.delete()
-            await callback.answer()
+    await proccess_and_send_audio(video_url, callback.message)
+    await callback.answer()
 
 async def main():
     await dp.start_polling(bot)
